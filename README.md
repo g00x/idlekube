@@ -95,60 +95,40 @@ python3 main.py scan -n backend --cpu-cost 30 --memory-cost 5
 
 ---
 
-## JSON and CSV export
+## Export formats
 
-Whenever you use `--format json` or `--format csv`, IdleKube **always saves** a report next to `main.py`:
+For `--format json`, `csv`, or `html`, IdleKube **always saves** a timestamped file under `reports/` (next to `main.py`):
 
 ```text
-reports/report-<scope>-<YYYYMMDD-HHMMSS>.json
+reports/report-<scope>-<YYYYMMDD-HHMMSS>.<ext>
 ```
 
-| Scan | Example file |
-|------|----------------|
+| Scan | Example |
+|------|---------|
 | Full cluster | `reports/report-cluster-20260515-143022.json` |
-| Namespace `payments` | `reports/report-payments-20260515-143022.json` |
+| Namespace `payments` | `reports/report-payments-20260515-143022.html` |
 
-The timestamp is **UTC** (same as `meta.generated_at` inside the JSON).
+Timestamps are **UTC**. After saving you will see on stderr:
 
-### Save JSON (most common)
+```text
+Report saved: .../reports/report-payments-20260515-143022.json
+```
+
+### JSON
 
 ```bash
 python3 main.py scan --format json
 python3 main.py scan -n payments --format json
 ```
 
-You will see on stderr:
-
-```text
-Report saved: /home/you/idlekube/reports/report-payments-20260515-143022.json
-```
-
-Open the file:
-
-```bash
-ls reports/
-cat reports/report-payments-*.json
-```
-
-### Pipe JSON to jq (`--stdout`)
-
-By default, JSON goes **only** to the file (not stdout). To also print JSON for piping:
+Pipe to `jq` with `--stdout` (file is still saved to `reports/`):
 
 ```bash
 python3 main.py scan --format json --stdout | jq '.workloads[] | select(.priority == "HIGH")'
 python3 main.py scan -n payments --format json --stdout | jq '.summary.estimated_monthly_waste_usd'
 ```
 
-### CSV export
-
-```bash
-python3 main.py scan --format csv
-python3 main.py scan -n payments --format csv --stdout
-```
-
-CSV contains **workloads only** (flat rows). Use JSON if you need cluster summary and per-namespace aggregation.
-
-### JSON structure (overview)
+Structure overview:
 
 ```json
 {
@@ -166,37 +146,43 @@ CSV contains **workloads only** (flat rows). Use JSON if you need cluster summar
 
 All numeric fields are plain numbers (no `1200m` or `$` suffixes).
 
----
+### CSV
 
-## HTML report
+```bash
+python3 main.py scan --format csv
+python3 main.py scan -n payments --format csv --stdout
+```
 
-Offline-friendly report (no CDN, no Google Fonts). Opens in any browser; suitable for email attachments.
+Flat workload rows only — use JSON or HTML for summaries and namespace rollups.
+
+### HTML report
+
+Self-contained, **offline-friendly** report for sharing (email, Confluence, audits). No CDN, no Google Fonts — only inline CSS and system fonts.
 
 ```bash
 python3 main.py scan --format html
 python3 main.py scan -n payments --format html
 ```
 
-Saved as:
-
-```text
-reports/report-<scope>-<YYYYMMDD-HHMMSS>.html
-```
-
-Open it:
+Open in a browser:
 
 ```bash
+ls reports/*.html
 xdg-open reports/report-cluster-*.html    # Linux
-open reports/report-cluster-*.html      # macOS
+open reports/report-cluster-*.html        # macOS
 ```
 
-Features:
+**What you get:**
 
-- Summary cards (CPU/memory efficiency, estimated waste)
-- Sortable namespace and workload tables (click column headers; numeric sort is type-aware)
-- Works fully offline
+| Section | Content |
+|---------|---------|
+| Summary cards | CPU/memory efficiency, estimated monthly and annual waste |
+| Namespace table | Per-namespace rollup (sortable) |
+| Workload table | Priorities, usage, problems (sortable) |
 
-**Note:** `--stdout` is not supported for HTML (file only). Using `--stdout` with `--format html` exits with an error.
+**Sorting:** click any column header. Numbers sort numerically (e.g. `200` before `1000`), not as strings.
+
+**Limitations:** HTML is **file only** — `--stdout` is not supported (`--format html --stdout` exits with an error).
 
 ---
 
@@ -281,13 +267,6 @@ Reports are always written under `reports/` with a timestamped name.
 ---
 
 ## How to test
-
-**Repair `main.py` if you see errors** (duplicate code at the bottom of the file):
-
-```bash
-cd ~/idlekube
-python3 fix_main.py
-```
 
 **Cluster + metrics**
 
