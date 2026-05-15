@@ -24,6 +24,21 @@ def _card(label: str, value: str, extra_class: str = "") -> str:
     )
 
 
+def _suggested_cell(workload: dict) -> str:
+    rec = workload.get("recommendation")
+    note = "Snapshot estimate. Validate against historical usage before applying."
+    if rec is None:
+        return f'<td class="suggested muted" title="{_h(note)}">—</td>'
+    cpu = f"cpu  →  {rec['suggested_cpu_request_m']}m / {rec['suggested_cpu_limit_m']}m"
+    mem = (
+        f"mem  →  {rec['suggested_memory_request_mib']}Mi / "
+        f"{rec['suggested_memory_limit_mib']}Mi"
+    )
+    body = f"<span class=\"suggested-line\">{_h(cpu)}</span><br>"
+    body += f"<span class=\"suggested-line\">{_h(mem)}</span>"
+    return f'<td class="suggested" title="{_h(note)}">{body}</td>'
+
+
 HTML_STYLES = """
 :root {
   --color-bg: #0f1419;
@@ -33,6 +48,7 @@ HTML_STYLES = """
   --color-muted: #8b9cb3;
   --color-border: #2d3a4f;
   --color-accent: #3b82f6;
+  --blue: #58a6ff;
   --color-high: #ef4444;
   --color-medium: #f59e0b;
   --color-low: #22c55e;
@@ -108,6 +124,14 @@ th.sort-asc::after { content: " \\25b2"; color: var(--color-accent); }
 th.sort-desc::after { content: " \\25bc"; color: var(--color-accent); }
 tr:hover td { background: var(--color-surface-alt); }
 td.wrap { white-space: normal; max-width: 280px; }
+td.suggested {
+  white-space: normal;
+  font-family: ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, monospace;
+  font-size: 0.8rem;
+  color: var(--blue);
+}
+td.suggested.muted { color: var(--color-muted); }
+.suggested-line { display: block; }
 .priority {
   display: inline-block;
   padding: 0.15rem 0.5rem;
@@ -238,11 +262,12 @@ def write_html(data: dict, output_path: str) -> None:
             + _sort_cell(f"{w['memory_used_mib']} Mi", w["memory_used_mib"])
             + _sort_cell(f"{w['memory_utilization_pct']}%", w["memory_utilization_pct"])
             + f'<td class="wrap">{_h(problems)}</td>'
+            + _suggested_cell(w)
             + "</tr>"
         )
 
     ns_body = "".join(ns_rows) if ns_rows else '<tr><td colspan="10">No namespaces</td></tr>'
-    wl_body = "".join(workload_rows) if workload_rows else '<tr><td colspan="12">No workloads</td></tr>'
+    wl_body = "".join(workload_rows) if workload_rows else '<tr><td colspan="13">No workloads</td></tr>'
 
     document = f"""<!DOCTYPE html>
 <html lang="en">
@@ -294,6 +319,7 @@ def write_html(data: dict, output_path: str) -> None:
         <th data-sort-type="number">Mem used</th>
         <th data-sort-type="number">Mem %</th>
         <th data-sort-type="string">Problems</th>
+        <th data-sort-type="string">Suggested</th>
       </tr></thead>
       <tbody>{wl_body}</tbody>
     </table>

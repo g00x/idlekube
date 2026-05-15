@@ -6,4 +6,4 @@ __pycache__/
 reports/*
 !reports/.gitkeep
 report.json
-*.html
+scripts/verify-last.txt
