@@ -98,6 +98,29 @@ Run IdleKube:
 
 python main.py
 
+# Demo workloads
+
+The repository contains example Kubernetes workloads inside:
+
+manifests/workloads.yaml
+
+These are optional demo workloads used for local testing on environments like:
+
+Minikube
+Kind
+local Kubernetes clusters
+
+You can deploy them with:
+
+kubectl apply -f manifests/workloads.yaml
+
+IdleKube itself does not depend on these workloads.
+
+It scans whatever workloads already exist in your cluster using:
+
+Kubernetes API
+metrics-server metrics
+
 ---
 
 # Usage
