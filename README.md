@@ -6,7 +6,7 @@ It helps surface:
 
 * low-utilization workloads
 * overprovisioned CPU and memory requests
-* estimated optimization potential
+* estimated resource waste
 * namespace-level inefficiencies
 * missing ownership labels
 * optimization priorities
@@ -19,7 +19,7 @@ The goal is to help identify where to look first when reviewing Kubernetes resou
 
 # Why I built this
 
-During Kubernetes and observability work, I kept seeing the same issue:
+I kept noticing the same pattern in Kubernetes clusters:
 
 teams often overprovision workloads because nobody fully trusts actual workload behavior, while operational visibility and cost visibility are usually disconnected.
 
@@ -81,6 +81,22 @@ Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
+
+---
+
+---
+
+# Quick Start
+
+Make sure metrics-server is installed and kubeconfig is configured locally.
+
+Verify metrics are available:
+
+kubectl top pods -A
+
+Run IdleKube:
+
+python main.py
 
 ---
 
