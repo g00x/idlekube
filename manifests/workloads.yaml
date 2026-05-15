@@ -1,0 +1,128 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-api
+  namespace: payments
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: payment-api
+  template:
+    metadata:
+      labels:
+        app: payment-api
+    spec:
+      containers:
+        - name: app
+          image: nginx:stable
+          resources:
+            requests:
+              cpu: "1000m"
+              memory: "1024Mi"
+            limits:
+              cpu: "2000m"
+              memory: "2048Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-api
+  namespace: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend-api
+  template:
+    metadata:
+      labels:
+        app: backend-api
+    spec:
+      containers:
+        - name: app
+          image: nginx:stable
+          resources:
+            requests:
+              cpu: "1500m"
+              memory: "2048Mi"
+            limits:
+              cpu: "2000m"
+              memory: "4096Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checkout-worker
+  namespace: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: checkout-worker
+  template:
+    metadata:
+      labels:
+        app: checkout-worker
+    spec:
+      containers:
+        - name: app
+          image: busybox:stable
+          command: ["sh", "-c", "while true; do echo working; sleep 30; done"]
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: app
+          image: nginx:stable
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: idle-service
+  namespace: idle
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: idle-service
+  template:
+    metadata:
+      labels:
+        app: idle-service
+    spec:
+      containers:
+        - name: app
+          image: busybox:stable
+          command: ["sh", "-c", "while true; do sleep 3600; done"]
+          resources:
+            requests:
+              cpu: "1000m"
+              memory: "1024Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1024Mi"
