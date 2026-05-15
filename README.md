@@ -12,6 +12,7 @@ It is **not** a billing tool. Use it to decide **where to look first** before ch
 - Surface missing ownership labels
 - Prioritize optimization targets (HIGH / MEDIUM / LOW)
 - Filter scans to a single namespace
+- **Resource recommendations** — suggested CPU/memory requests and limits (snapshot-based, low confidence)
 - Export results as **JSON**, **CSV**, or **HTML** (saved under `reports/`)
 
 ## Requirements
@@ -58,6 +59,23 @@ kubectl apply -f manifests/workloads.yaml
 
 ```bash
 python3 main.py scan
+```
+
+## Project layout
+
+```text
+idlekube/
+  models.py              # WorkloadRow, NamespaceSummary, Recommendation
+  k8s.py                 # Kubernetes API + metrics-server
+  compute.py             # scan logic, priorities, waste estimates
+  recommendations.py     # suggested requests/limits (tunable constants)
+  formatters/
+    table.py             # Rich terminal output
+    json_.py, csv_.py, html_.py
+main.py                  # CLI entrypoint (typer)
+manifests/workloads.yaml # optional demo workloads
+reports/                 # generated exports (gitignored)
+scripts/verify.py        # offline smoke tests (no cluster)
 ```
 
 ## Usage
@@ -140,9 +158,25 @@ Structure overview:
   },
   "summary": { "...": "cluster or namespace totals" },
   "namespaces": [ "... per-namespace rollup ..." ],
-  "workloads": [ "... one object per Deployment ..." ]
+  "workloads": [
+    {
+      "namespace": "payments",
+      "deployment": "checkout-api",
+      "priority": "HIGH",
+      "recommendation": {
+        "suggested_cpu_request_m": 100,
+        "suggested_cpu_limit_m": 200,
+        "suggested_memory_request_mib": 64,
+        "suggested_memory_limit_mib": 96,
+        "confidence": "low",
+        "note": "Snapshot estimate. Validate against historical usage before applying to production."
+      }
+    }
+  ]
 }
 ```
+
+Each workload has `"recommendation": { ... }` when overprovisioned, or `null` when there is insufficient data or savings below 20%.
 
 All numeric fields are plain numbers (no `1200m` or `$` suffixes).
 
@@ -178,7 +212,10 @@ open reports/report-cluster-*.html        # macOS
 |---------|---------|
 | Summary cards | CPU/memory efficiency, estimated monthly and annual waste |
 | Namespace table | Per-namespace rollup (sortable) |
-| Workload table | Priorities, usage, problems (sortable) |
+| Workload table | Priorities, usage, problems, **Suggested** column (sortable) |
+| Terminal only | **Suggested resource values** section for overprovisioned workloads |
+
+The **Suggested** column shows proposed request/limit pairs (e.g. `cpu → 100m / 200m`). Hover for the validation note.
 
 **Sorting:** click any column header. Numbers sort numerically (e.g. `200` before `1000`), not as strings.
 
@@ -268,6 +305,13 @@ Reports are always written under `reports/` with a timestamped name.
 
 ## How to test
 
+**Offline (no cluster)**
+
+```bash
+source .venv/bin/activate
+python3 scripts/verify.py
+```
+
 **Cluster + metrics**
 
 ```bash
@@ -283,15 +327,18 @@ python3 main.py scan --format json            # -> reports/report-*.json
 python3 main.py scan --format html            # -> reports/report-*.html
 python3 main.py scan -n payments --format html
 python3 main.py scan --format json --stdout | jq '.summary'
+python3 main.py scan --format json --stdout | jq '.workloads[].recommendation'
 ```
 
 **HTML:** open `reports/report-*.html` in a browser (works offline). Click column headers to sort.
 
 **Checklist**
 
-- [ ] `scan` (table) unchanged
+- [ ] `scan` (table) shows summary, namespace table, workload priorities
+- [ ] Overprovisioned workloads show **Suggested resource values** in terminal output
 - [ ] JSON/CSV/HTML files appear in `reports/` with timestamp in the name
-- [ ] HTML has no external URLs (offline OK)
+- [ ] JSON workloads include `recommendation` (object or `null`)
+- [ ] HTML has **Suggested** column; no external URLs (offline OK)
 - [ ] Table sort: `1000` before `200` on numeric columns
 - [ ] `--format html --stdout` → error (no HTML on stdout)
 
@@ -301,7 +348,8 @@ python3 main.py scan --format json --stdout | jq '.summary'
 
 IdleKube uses **snapshot** metrics from metrics-server:
 
-- Recommendations are approximate
+- Suggested requests/limits are **approximate** (`confidence: low` in JSON)
+- Only shown when estimated savings exceed ~20% vs current requests
 - No historical p95/p99 analysis yet
 - Use output for **prioritization**, not direct production changes
 
@@ -314,7 +362,8 @@ Before lowering requests or limits in production, validate behavior over a longe
 - Deployment correlation
 - OpenCost integration
 - Owner/team mapping file
-- Recommendation confidence scoring
+- Recommendation confidence from Prometheus history (p95/p99)
+- CLI flags for recommendation multipliers
 
 ## License
 
