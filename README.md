@@ -1,213 +1,298 @@
 # IdleKube
 
-IdleKube is a small terminal-based Kubernetes efficiency scanner.
+IdleKube is a terminal-based Kubernetes efficiency scanner. It compares workload **requests** against live **usage** from metrics-server and highlights where CPU and memory look overprovisioned.
 
-It helps surface:
+It is **not** a billing tool. Use it to decide **where to look first** before changing production requests or limits.
 
-* low-utilization workloads
-* overprovisioned CPU and memory requests
-* estimated resource waste
-* namespace-level inefficiencies
-* missing ownership labels
-* optimization priorities
+## Features
 
-It is not a billing tool.
+- Detect low-utilization workloads
+- Detect overprovisioned CPU and memory requests
+- Estimate potential monthly waste (configurable cost model)
+- Surface missing ownership labels
+- Prioritize optimization targets (HIGH / MEDIUM / LOW)
+- Filter scans to a single namespace
+- Export results as **JSON** or **CSV** (stdout or timestamped files in `reports/`)
 
-The goal is to help identify where to look first when reviewing Kubernetes resource usage and operational waste.
+## Requirements
 
----
+- Python 3.10+
+- `kubectl` and a working kubeconfig
+- [metrics-server](https://github.com/kubernetes-sigs/metrics-server) in the cluster
 
-# Why I built this
-
-I kept noticing the same pattern in Kubernetes clusters:
-
-teams often overprovision workloads because nobody fully trusts actual workload behavior, while operational visibility and cost visibility are usually disconnected.
-
-IdleKube is a small experiment to make those inefficiencies easier to spot.
-
----
-
-# Screenshot
-
-<img width="3511" height="887" alt="obraz" src="https://github.com/user-attachments/assets/91f6dca4-050f-4976-9754-4c39766e1609" />
-<img width="3152" height="596" alt="obraz" src="https://github.com/user-attachments/assets/f364ff67-da4b-4e0d-bf61-768908811c67" />
-
-Example output includes:
-
-* cluster-level efficiency summary
-* namespace-level optimization overview
-* workload optimization priorities
-* estimated monthly optimization potential
-* suggested next actions
-
----
-
-# Features
-
-* Detect low-utilization workloads
-* Detect overprovisioned CPU/memory requests
-* Estimate potential monthly waste
-* Surface missing ownership labels
-* Prioritize optimization targets
-* Generate actionable next steps
-* Filter scans to a single namespace (team, environment, or service boundary)
-
----
-
-# Requirements
-
-* Python 3.10+
-* Kubernetes cluster access
-* kubeconfig configured locally
-* metrics-server installed in the cluster
-
----
-
-# Install
-
-Create virtual environment:
+## Install
 
 ```bash
+git clone <your-repo-url>
+cd idlekube
+
 python3 -m venv .venv
-```
-
-Activate environment:
-
-```bash
 source .venv/bin/activate
-```
-
-Install dependencies:
-
-```bash
 pip install -r requirements.txt
 ```
 
----
+## Quick start
 
-# Quick Start
+**1. Check cluster access**
 
-Make sure metrics-server is installed and kubeconfig is configured locally.
+```bash
+kubectl cluster-info
+kubectl get nodes
+```
 
-Verify metrics are available:
+**2. Check metrics-server**
 
 ```bash
 kubectl top pods -A
 ```
 
-Run IdleKube:
+If this fails with `503` or `Service Unavailable`, see [Troubleshooting](#troubleshooting) below.
 
-```bash
-python main.py scan
-```
-
----
-
-# Demo workloads
-
-The repository contains example Kubernetes workloads inside:
-
-`manifests/workloads.yaml`
-
-These are optional demo workloads used for local testing on environments like:
-
-* Minikube
-* Kind
-* local Kubernetes clusters
-
-You can deploy them with:
+**3. (Optional) Deploy demo workloads**
 
 ```bash
 kubectl apply -f manifests/workloads.yaml
 ```
 
-IdleKube itself does not depend on these workloads.
+**4. Run a scan**
 
-It scans whatever workloads already exist in your cluster using:
+```bash
+python3 main.py scan
+```
 
-* Kubernetes API
-* metrics-server metrics
+## Usage
+
+IdleKube uses subcommands. The main command is **`scan`**.
+
+```bash
+python3 main.py --help
+python3 main.py scan --help
+```
+
+### Table output (default)
+
+Full cluster scan (skips system namespaces like `kube-system` by default):
+
+```bash
+python3 main.py scan
+```
+
+### Namespace filter
+
+Scan one namespace only:
+
+```bash
+python3 main.py scan --namespace payments
+python3 main.py scan -n payments
+```
+
+### Custom cost model
+
+```bash
+python3 main.py scan --cpu-cost 30 --memory-cost 5
+python3 main.py scan -n backend --cpu-cost 30 --memory-cost 5
+```
 
 ---
 
-# Usage
+## JSON and CSV export
 
-Run a full cluster scan (system namespaces such as `kube-system` are skipped by default):
+### Print JSON to the terminal (stdout)
+
+Use this when you want to pipe output into `jq`, another script, or CI:
 
 ```bash
+python3 main.py scan --format json
+python3 main.py scan -n payments --format json
+```
+
+Example — list only HIGH priority workloads:
+
+```bash
+python3 main.py scan --format json | jq '.workloads[] | select(.priority == "HIGH")'
+```
+
+Example — read estimated monthly waste:
+
+```bash
+python3 main.py scan --format json | jq '.summary.estimated_monthly_waste_usd'
+```
+
+### Save JSON to `reports/` (with date and time in the filename)
+
+Use the **`-o` / `--output` flag** (no filename needed). IdleKube creates the `reports/` directory and writes a timestamped file:
+
+```bash
+python3 main.py scan --format json -o
+python3 main.py scan -n payments --format json --output
+```
+
+**Filename pattern:**
+
+```text
+reports/report-<scope>-<YYYYMMDD-HHMMSS>.json
+```
+
+| Command | Example file |
+|---------|----------------|
+| Full cluster | `reports/report-cluster-20260515-143022.json` |
+| Namespace `payments` | `reports/report-payments-20260515-143022.json` |
+
+The timestamp is **UTC** (`meta.generated_at` in the JSON uses the same format).
+
+After saving, IdleKube prints a short message on stderr, for example:
+
+```text
+Report saved: reports/report-payments-20260515-143022.json
+```
+
+Open the latest report:
+
+```bash
+ls -t reports/*.json | head -1 | xargs cat
+# or
+cat reports/report-payments-*.json
+```
+
+### CSV export
+
+Print to stdout:
+
+```bash
+python3 main.py scan --format csv
+```
+
+Save to `reports/`:
+
+```bash
+python3 main.py scan --format csv -o
+```
+
+CSV contains **workloads only** (flat rows). Use JSON if you need cluster summary and per-namespace aggregation.
+
+### JSON structure (overview)
+
+```json
+{
+  "meta": {
+    "generated_at": "2026-05-15T14:30:22Z",
+    "scope": "namespace",
+    "namespace_filter": "payments",
+    "cost_model": { "cpu_per_core_month_usd": 25.0, "memory_per_gb_month_usd": 4.0 }
+  },
+  "summary": { "...": "cluster or namespace totals" },
+  "namespaces": [ "... per-namespace rollup ..." ],
+  "workloads": [ "... one object per Deployment ..." ]
+}
+```
+
+All numeric fields are plain numbers (no `1200m` or `$` suffixes).
+
+---
+
+## Demo workloads
+
+Optional manifests for local testing (Minikube, Kind, etc.):
+
+```bash
+kubectl apply -f manifests/workloads.yaml
+python3 main.py scan
+```
+
+IdleKube does not require these workloads — it scans whatever Deployments already exist in your cluster.
+
+## Screenshot
+
+<img width="3511" height="887" alt="Cluster summary and namespace table" src="https://github.com/user-attachments/assets/91f6dca4-050f-4976-9754-4c39766e1609" />
+<img width="3152" height="596" alt="Workload priorities and recommendations" src="https://github.com/user-attachments/assets/f364ff67-da4b-4e0d-bf61-768908811c67" />
+
+## Troubleshooting
+
+### `Connection refused` to `127.0.0.1`
+
+Your kubeconfig points at a local API (Minikube/Kind) that is not running. Start the cluster and verify:
+
+```bash
+minikube start          # if using Minikube
+kubectl cluster-info
+```
+
+### metrics-server returns `503`
+
+On Kind, Minikube, and other local clusters, metrics-server often needs `--kubelet-insecure-tls`:
+
+```bash
+kubectl patch deployment metrics-server -n kube-system --type=json -p='[
+  {"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--kubelet-insecure-tls"}
+]'
+kubectl rollout status deployment/metrics-server -n kube-system
+kubectl top pods -A
+```
+
+Install metrics-server if missing:
+
+```bash
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+```
+
+Minikube:
+
+```bash
+minikube addons enable metrics-server
+```
+
+### `Got unexpected extra argument (scan)`
+
+Use the `scan` subcommand explicitly:
+
+```bash
+python3 main.py scan
+```
+
+### `command not found: python`
+
+Use `python3`, or activate the virtualenv:
+
+```bash
+source .venv/bin/activate
 python main.py scan
 ```
 
-## Namespace filtering
+### Stray files in the project root
 
-To analyze only one namespace — useful when reviewing a single team, product, or environment:
-
-```bash
-python main.py scan --namespace payments
-```
-
-Short form:
+Do **not** pass a filename to `--output`. Use the flag alone:
 
 ```bash
-python main.py scan -n payments
+# correct
+python3 main.py scan --format json -o
+
+# wrong — can create odd files like "can" in the repo root
+python3 main.py scan --output report.json
 ```
 
-With a namespace filter, IdleKube:
-
-* queries only Deployments and Pods in that namespace
-* reads metrics-server data scoped to that namespace
-* shows a namespace-focused summary panel (instead of a full-cluster summary)
-
-If the namespace does not exist, IdleKube exits with an error. If it exists but has no Deployments, you get a clear message and no workload table.
-
-You can still pass cost options together with a namespace filter:
-
-```bash
-python main.py scan -n backend --cpu-cost 30 --memory-cost 5
-```
+Reports belong in `reports/` only.
 
 ---
 
-# Example use cases
+## Important note
 
-IdleKube can be useful for:
+IdleKube uses **snapshot** metrics from metrics-server:
 
-* quick Kubernetes cluster reviews
-* identifying obvious overprovisioning
-* platform engineering audits
-* FinOps reviews
-* operational cleanup efforts
-* improving workload ownership visibility
-* reviewing one namespace at a time (e.g. `payments`, `backend`, `staging`)
+- Recommendations are approximate
+- No historical p95/p99 analysis yet
+- Use output for **prioritization**, not direct production changes
 
----
+Before lowering requests or limits in production, validate behavior over a longer window (Prometheus, OpenCost, etc.).
 
-# Important note
+## Roadmap
 
-IdleKube currently uses snapshot metrics from metrics-server.
+- Prometheus historical analysis
+- p95 / p99 utilization
+- Deployment correlation
+- OpenCost integration
+- Owner/team mapping file
+- Recommendation confidence scoring
 
-This means:
-
-* recommendations are approximate
-* workload behavior over time is not analyzed yet
-* output should be used for prioritization, not direct production changes
-
-Before modifying production requests/limits, validate workload behavior using longer historical windows (Prometheus, OpenCost, observability tooling, etc.).
-
----
-
-# Possible future improvements
-
-* Prometheus historical analysis
-* p95 / p99 utilization analysis
-* deployment correlation
-* OpenCost integration
-* JSON export
-* owner/team mapping
-* recommendation confidence scoring
-
----
-
-# License
+## License
 
 MIT

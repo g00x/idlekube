@@ -2,7 +2,12 @@
 # It uses current metrics-server data, so recommendations should be validated
 # against historical usage before changing production requests.
 
+import csv
+import io
+import json
 from collections import defaultdict
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from kubernetes import client, config
@@ -12,8 +17,13 @@ from rich.table import Table
 from rich.panel import Panel
 import typer
 
-app = typer.Typer()
+app = typer.Typer(help="IdleKube — Kubernetes efficiency scanner.")
 console = Console()
+
+
+@app.callback()
+def main() -> None:
+    """Analyze cluster resource usage and surface optimization targets."""
 
 SYSTEM_NAMESPACES = [
     "kube-system",
@@ -21,6 +31,8 @@ SYSTEM_NAMESPACES = [
     "kube-node-lease",
     "default",
 ]
+
+REPORTS_DIR = Path("reports")
 
 
 def include_namespace(namespace: str, namespace_filter: Optional[str]) -> bool:
@@ -128,6 +140,18 @@ def get_environment(labels: dict) -> str:
     return "unknown"
 
 
+def print_metrics_server_local_fix() -> None:
+    console.print(
+        "\n[yellow]Common fix for local/dev clusters (Kind, Minikube):[/yellow]\n"
+        "  kubectl patch deployment metrics-server -n kube-system --type=json -p='[\n"
+        '    {"op": "add", "path": "/spec/template/spec/containers/0/args/-", '
+        '"value": "--kubelet-insecure-tls"}\n'
+        "  ]'\n"
+        "  kubectl rollout status deployment/metrics-server -n kube-system\n"
+        "  kubectl top pods -A\n"
+    )
+
+
 def get_pod_metrics(namespace_filter: Optional[str] = None):
     custom_api = client.CustomObjectsApi()
 
@@ -145,8 +169,15 @@ def get_pod_metrics(namespace_filter: Optional[str] = None):
                 version="v1beta1",
                 plural="pods",
             )
+    except ApiException as e:
+        console.print(f"[red]Could not read metrics-server data: {e}[/red]")
+        if e.status == 503:
+            print_metrics_server_local_fix()
+        return {}
     except Exception as e:
         console.print(f"[red]Could not read metrics-server data: {e}[/red]")
+        if "503" in str(e) or "Service Unavailable" in str(e):
+            print_metrics_server_local_fix()
         return {}
 
     pod_usage = {}
@@ -174,6 +205,171 @@ def get_pod_metrics(namespace_filter: Optional[str] = None):
     return pod_usage
 
 
+def build_output_dict(
+    workload_rows: list,
+    namespace_summary: dict,
+    cluster_cpu_req: int,
+    cluster_cpu_usage: int,
+    cluster_mem_req: int,
+    cluster_mem_usage: int,
+    cluster_waste_usd: float,
+    cpu_cost: float,
+    memory_cost: float,
+    namespace_filter: Optional[str],
+) -> dict:
+    unused_cpu_total = max(cluster_cpu_req - cluster_cpu_usage, 0)
+    unused_mem_total = max(cluster_mem_req - cluster_mem_usage, 0)
+    cpu_efficiency = (
+        round((cluster_cpu_usage / cluster_cpu_req) * 100, 2) if cluster_cpu_req else 0
+    )
+    memory_efficiency = (
+        round((cluster_mem_usage / cluster_mem_req) * 100, 2) if cluster_mem_req else 0
+    )
+
+    namespaces = []
+    sorted_namespaces = sorted(
+        namespace_summary.items(),
+        key=lambda item: item[1]["waste_usd"],
+        reverse=True,
+    )
+    for namespace, data in sorted_namespaces:
+        ns_unused_cpu = max(data["cpu_req"] - data["cpu_usage"], 0)
+        ns_unused_mem = max(data["mem_req"] - data["mem_usage"], 0)
+        namespaces.append(
+            {
+                "namespace": namespace,
+                "workload_count": data["workloads"],
+                "owners": sorted(data["owners"]),
+                "cpu_requested_m": data["cpu_req"],
+                "cpu_used_m": data["cpu_usage"],
+                "cpu_unused_m": ns_unused_cpu,
+                "memory_requested_mib": data["mem_req"],
+                "memory_used_mib": data["mem_usage"],
+                "memory_unused_mib": ns_unused_mem,
+                "estimated_monthly_waste_usd": round(data["waste_usd"], 2),
+                "high_priority_count": data["high"],
+                "medium_priority_count": data["medium"],
+                "low_priority_count": data["low"],
+            }
+        )
+
+    workloads = []
+    for row in workload_rows:
+        workloads.append(
+            {
+                "namespace": row["namespace"],
+                "deployment": row["name"],
+                "service": row["service"],
+                "owner": row["owner"],
+                "environment": row["environment"],
+                "replicas": row["replicas"],
+                "cpu_requested_m": row["cpu_req"],
+                "cpu_used_m": row["cpu_usage"],
+                "cpu_unused_m": row["unused_cpu"],
+                "cpu_utilization_pct": row["cpu_ratio"],
+                "memory_requested_mib": row["mem_req"],
+                "memory_used_mib": row["mem_usage"],
+                "memory_unused_mib": row["unused_mem"],
+                "memory_utilization_pct": row["mem_ratio"],
+                "estimated_monthly_waste_usd": row["monthly_waste"],
+                "priority": row["priority"],
+                "idle": row["idle"],
+                "missing_limits": row["missing_limits"],
+                "problems": row["problems"],
+            }
+        )
+
+    return {
+        "meta": {
+            "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "scope": "namespace" if namespace_filter else "cluster",
+            "namespace_filter": namespace_filter,
+            "cost_model": {
+                "cpu_per_core_month_usd": cpu_cost,
+                "memory_per_gb_month_usd": memory_cost,
+            },
+        },
+        "summary": {
+            "cpu_requested_m": cluster_cpu_req,
+            "cpu_used_m": cluster_cpu_usage,
+            "cpu_unused_m": unused_cpu_total,
+            "cpu_efficiency_pct": cpu_efficiency,
+            "memory_requested_mib": cluster_mem_req,
+            "memory_used_mib": cluster_mem_usage,
+            "memory_unused_mib": unused_mem_total,
+            "memory_efficiency_pct": memory_efficiency,
+            "estimated_monthly_waste_usd": round(cluster_waste_usd, 2),
+            "estimated_annual_waste_usd": round(cluster_waste_usd * 12, 2),
+        },
+        "namespaces": namespaces,
+        "workloads": workloads,
+    }
+
+
+def resolve_report_path(
+    output_format: str,
+    namespace_filter: Optional[str],
+) -> Path:
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    scope = namespace_filter if namespace_filter else "cluster"
+    ext = "json" if output_format == "json" else "csv"
+    return REPORTS_DIR / f"report-{scope}-{ts}.{ext}"
+
+
+def write_json(data: dict, output_path: Optional[str]) -> None:
+    text = json.dumps(data, indent=2)
+    if output_path:
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(text)
+    else:
+        print(text)
+
+
+def write_csv(data: dict, output_path: Optional[str]) -> None:
+    fieldnames = [
+        "namespace",
+        "deployment",
+        "service",
+        "owner",
+        "environment",
+        "replicas",
+        "cpu_requested_m",
+        "cpu_used_m",
+        "cpu_unused_m",
+        "cpu_utilization_pct",
+        "memory_requested_mib",
+        "memory_used_mib",
+        "memory_unused_mib",
+        "memory_utilization_pct",
+        "estimated_monthly_waste_usd",
+        "priority",
+        "idle",
+        "missing_limits",
+        "problems",
+    ]
+
+    rows = []
+    for w in data["workloads"]:
+        row = dict(w)
+        row["problems"] = ";".join(w["problems"])
+        row["idle"] = str(w["idle"]).lower()
+        row["missing_limits"] = str(w["missing_limits"]).lower()
+        rows.append(row)
+
+    if output_path:
+        with open(output_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(rows)
+    else:
+        buf = io.StringIO()
+        writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+        print(buf.getvalue(), end="")
+
+
 @app.command()
 def scan(
     namespace_filter: Optional[str] = typer.Option(
@@ -184,7 +380,30 @@ def scan(
     ),
     cpu_cost: float = typer.Option(25.0, help="Monthly cost per CPU core"),
     memory_cost: float = typer.Option(4.0, help="Monthly cost per GB memory"),
+    output_format: str = typer.Option(
+        "table", "--format", help="Output format: table, json, csv"
+    ),
+    save_report: bool = typer.Option(
+        False,
+        "--output",
+        "-o",
+        help="Save report to reports/report-<scope>-<YYYYMMDD-HHMMSS>.<format>",
+    ),
 ):
+    global console
+
+    if output_format not in ("table", "json", "csv"):
+        Console(stderr=True).print(
+            f"[red]Invalid format: {output_format}. Use table, json, or csv.[/red]"
+        )
+        raise typer.Exit(code=1)
+
+    if output_format in ("json", "csv"):
+        if save_report:
+            console = Console(quiet=True)
+        else:
+            console = Console(stderr=True)
+
     config.load_kube_config()
 
     apps_v1 = client.AppsV1Api()
@@ -392,6 +611,32 @@ def scan(
 
     cpu_efficiency = round((cluster_cpu_usage / cluster_cpu_req) * 100, 2) if cluster_cpu_req else 0
     memory_efficiency = round((cluster_mem_usage / cluster_mem_req) * 100, 2) if cluster_mem_req else 0
+
+    if output_format in ("json", "csv"):
+        output_data = build_output_dict(
+            workload_rows=workload_rows,
+            namespace_summary=namespace_summary,
+            cluster_cpu_req=cluster_cpu_req,
+            cluster_cpu_usage=cluster_cpu_usage,
+            cluster_mem_req=cluster_mem_req,
+            cluster_mem_usage=cluster_mem_usage,
+            cluster_waste_usd=cluster_waste_usd,
+            cpu_cost=cpu_cost,
+            memory_cost=memory_cost,
+            namespace_filter=namespace_filter,
+        )
+        if save_report:
+            report_path = resolve_report_path(output_format, namespace_filter)
+            if output_format == "json":
+                write_json(output_data, str(report_path))
+            else:
+                write_csv(output_data, str(report_path))
+            Console(stderr=True).print(f"Report saved: {report_path}")
+        elif output_format == "json":
+            write_json(output_data, None)
+        else:
+            write_csv(output_data, None)
+        return
 
     if namespace_filter and not workload_rows:
         console.print(

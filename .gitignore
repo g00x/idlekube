@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 .env
 .DS_Store
+reports/*
+!reports/.gitkeep
+report.json
