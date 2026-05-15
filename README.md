@@ -50,10 +50,7 @@ Example output includes:
 * Surface missing ownership labels
 * Prioritize optimization targets
 * Generate actionable next steps
-<<<<<<< HEAD
-=======
 * Filter scans to a single namespace (team, environment, or service boundary)
->>>>>>> fa00268 (readme + ns)
 
 ---
 
@@ -88,21 +85,12 @@ pip install -r requirements.txt
 
 ---
 
----
-
 # Quick Start
 
 Make sure metrics-server is installed and kubeconfig is configured locally.
 
 Verify metrics are available:
 
-<<<<<<< HEAD
-kubectl top pods -A
-
-Run IdleKube:
-
-python main.py
-=======
 ```bash
 kubectl top pods -A
 ```
@@ -112,48 +100,45 @@ Run IdleKube:
 ```bash
 python main.py scan
 ```
->>>>>>> fa00268 (readme + ns)
+
+---
 
 # Demo workloads
 
 The repository contains example Kubernetes workloads inside:
 
-manifests/workloads.yaml
+`manifests/workloads.yaml`
 
 These are optional demo workloads used for local testing on environments like:
 
-Minikube
-Kind
-local Kubernetes clusters
+* Minikube
+* Kind
+* local Kubernetes clusters
 
 You can deploy them with:
 
+```bash
 kubectl apply -f manifests/workloads.yaml
+```
 
 IdleKube itself does not depend on these workloads.
 
 It scans whatever workloads already exist in your cluster using:
 
-Kubernetes API
-metrics-server metrics
+* Kubernetes API
+* metrics-server metrics
 
 ---
 
 # Usage
 
-<<<<<<< HEAD
-Run the scanner:
-
-```bash
-python main.py
-=======
 Run a full cluster scan (system namespaces such as `kube-system` are skipped by default):
 
 ```bash
 python main.py scan
 ```
 
-### Namespace filtering
+## Namespace filtering
 
 To analyze only one namespace — useful when reviewing a single team, product, or environment:
 
@@ -179,7 +164,6 @@ You can still pass cost options together with a namespace filter:
 
 ```bash
 python main.py scan -n backend --cpu-cost 30 --memory-cost 5
->>>>>>> fa00268 (readme + ns)
 ```
 
 ---
@@ -194,10 +178,7 @@ IdleKube can be useful for:
 * FinOps reviews
 * operational cleanup efforts
 * improving workload ownership visibility
-<<<<<<< HEAD
-=======
 * reviewing one namespace at a time (e.g. `payments`, `backend`, `staging`)
->>>>>>> fa00268 (readme + ns)
 
 ---
 
@@ -229,8 +210,4 @@ Before modifying production requests/limits, validate workload behavior using lo
 
 # License
 
-<<<<<<< HEAD
 MIT
-=======
-MIT
->>>>>>> fa00268 (readme + ns)
