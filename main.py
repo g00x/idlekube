@@ -17,7 +17,11 @@ from rich.table import Table
 from rich.panel import Panel
 import typer
 
+from html_report import write_html
+
 app = typer.Typer(help="IdleKube — Kubernetes efficiency scanner.")
+
+EXPORT_FORMATS = ("json", "csv", "html")
 console = Console()
 
 
@@ -32,7 +36,7 @@ SYSTEM_NAMESPACES = [
     "default",
 ]
 
-REPORTS_DIR = Path("reports")
+REPORTS_DIR = Path(__file__).resolve().parent / "reports"
 
 
 def include_namespace(namespace: str, namespace_filter: Optional[str]) -> bool:
@@ -313,7 +317,8 @@ def resolve_report_path(
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     scope = namespace_filter if namespace_filter else "cluster"
-    ext = "json" if output_format == "json" else "csv"
+    extensions = {"json": "json", "csv": "csv", "html": "html"}
+    ext = extensions[output_format]
     return REPORTS_DIR / f"report-{scope}-{ts}.{ext}"
 
 
@@ -381,28 +386,31 @@ def scan(
     cpu_cost: float = typer.Option(25.0, help="Monthly cost per CPU core"),
     memory_cost: float = typer.Option(4.0, help="Monthly cost per GB memory"),
     output_format: str = typer.Option(
-        "table", "--format", help="Output format: table, json, csv"
+        "table", "--format", help="Output format: table, json, csv, html"
     ),
-    save_report: bool = typer.Option(
+    print_stdout: bool = typer.Option(
         False,
-        "--output",
-        "-o",
-        help="Save report to reports/report-<scope>-<YYYYMMDD-HHMMSS>.<format>",
+        "--stdout",
+        help="Also print JSON/CSV to stdout (for jq). Ignored for HTML.",
     ),
 ):
     global console
 
-    if output_format not in ("table", "json", "csv"):
+    if output_format not in ("table",) + EXPORT_FORMATS:
         Console(stderr=True).print(
-            f"[red]Invalid format: {output_format}. Use table, json, or csv.[/red]"
+            f"[red]Invalid format: {output_format}. Use table, json, csv, or html.[/red]"
         )
         raise typer.Exit(code=1)
 
-    if output_format in ("json", "csv"):
-        if save_report:
-            console = Console(quiet=True)
-        else:
-            console = Console(stderr=True)
+    if output_format == "html" and print_stdout:
+        Console(stderr=True).print(
+            "[red]--stdout is not supported for HTML. "
+            "HTML is always saved under reports/.[/red]"
+        )
+        raise typer.Exit(code=1)
+
+    if output_format in EXPORT_FORMATS:
+        console = Console(stderr=True)
 
     config.load_kube_config()
 
@@ -612,7 +620,7 @@ def scan(
     cpu_efficiency = round((cluster_cpu_usage / cluster_cpu_req) * 100, 2) if cluster_cpu_req else 0
     memory_efficiency = round((cluster_mem_usage / cluster_mem_req) * 100, 2) if cluster_mem_req else 0
 
-    if output_format in ("json", "csv"):
+    if output_format in EXPORT_FORMATS:
         output_data = build_output_dict(
             workload_rows=workload_rows,
             namespace_summary=namespace_summary,
@@ -625,17 +633,19 @@ def scan(
             memory_cost=memory_cost,
             namespace_filter=namespace_filter,
         )
-        if save_report:
-            report_path = resolve_report_path(output_format, namespace_filter)
-            if output_format == "json":
-                write_json(output_data, str(report_path))
-            else:
-                write_csv(output_data, str(report_path))
-            Console(stderr=True).print(f"Report saved: {report_path}")
-        elif output_format == "json":
-            write_json(output_data, None)
+        report_path = resolve_report_path(output_format, namespace_filter)
+        if output_format == "json":
+            write_json(output_data, str(report_path))
+        elif output_format == "csv":
+            write_csv(output_data, str(report_path))
         else:
-            write_csv(output_data, None)
+            write_html(output_data, str(report_path))
+        console.print(f"[green]Report saved:[/green] {report_path}")
+        if print_stdout and output_format in ("json", "csv"):
+            if output_format == "json":
+                write_json(output_data, None)
+            else:
+                write_csv(output_data, None)
         return
 
     if namespace_filter and not workload_rows:
@@ -797,7 +807,6 @@ def scan(
         "Use it for prioritization, not final billing. "
         "For production-grade accuracy, add Prometheus history or OpenCost later."
     )
-
 
 if __name__ == "__main__":
     app()

@@ -12,7 +12,7 @@ It is **not** a billing tool. Use it to decide **where to look first** before ch
 - Surface missing ownership labels
 - Prioritize optimization targets (HIGH / MEDIUM / LOW)
 - Filter scans to a single namespace
-- Export results as **JSON** or **CSV** (stdout or timestamped files in `reports/`)
+- Export results as **JSON**, **CSV**, or **HTML** (saved under `reports/`)
 
 ## Requirements
 
@@ -97,75 +97,53 @@ python3 main.py scan -n backend --cpu-cost 30 --memory-cost 5
 
 ## JSON and CSV export
 
-### Print JSON to the terminal (stdout)
+Whenever you use `--format json` or `--format csv`, IdleKube **always saves** a report next to `main.py`:
 
-Use this when you want to pipe output into `jq`, another script, or CI:
+```text
+reports/report-<scope>-<YYYYMMDD-HHMMSS>.json
+```
+
+| Scan | Example file |
+|------|----------------|
+| Full cluster | `reports/report-cluster-20260515-143022.json` |
+| Namespace `payments` | `reports/report-payments-20260515-143022.json` |
+
+The timestamp is **UTC** (same as `meta.generated_at` inside the JSON).
+
+### Save JSON (most common)
 
 ```bash
 python3 main.py scan --format json
 python3 main.py scan -n payments --format json
 ```
 
-Example — list only HIGH priority workloads:
-
-```bash
-python3 main.py scan --format json | jq '.workloads[] | select(.priority == "HIGH")'
-```
-
-Example — read estimated monthly waste:
-
-```bash
-python3 main.py scan --format json | jq '.summary.estimated_monthly_waste_usd'
-```
-
-### Save JSON to `reports/` (with date and time in the filename)
-
-Use the **`-o` / `--output` flag** (no filename needed). IdleKube creates the `reports/` directory and writes a timestamped file:
-
-```bash
-python3 main.py scan --format json -o
-python3 main.py scan -n payments --format json --output
-```
-
-**Filename pattern:**
+You will see on stderr:
 
 ```text
-reports/report-<scope>-<YYYYMMDD-HHMMSS>.json
+Report saved: /home/you/idlekube/reports/report-payments-20260515-143022.json
 ```
 
-| Command | Example file |
-|---------|----------------|
-| Full cluster | `reports/report-cluster-20260515-143022.json` |
-| Namespace `payments` | `reports/report-payments-20260515-143022.json` |
-
-The timestamp is **UTC** (`meta.generated_at` in the JSON uses the same format).
-
-After saving, IdleKube prints a short message on stderr, for example:
-
-```text
-Report saved: reports/report-payments-20260515-143022.json
-```
-
-Open the latest report:
+Open the file:
 
 ```bash
-ls -t reports/*.json | head -1 | xargs cat
-# or
+ls reports/
 cat reports/report-payments-*.json
+```
+
+### Pipe JSON to jq (`--stdout`)
+
+By default, JSON goes **only** to the file (not stdout). To also print JSON for piping:
+
+```bash
+python3 main.py scan --format json --stdout | jq '.workloads[] | select(.priority == "HIGH")'
+python3 main.py scan -n payments --format json --stdout | jq '.summary.estimated_monthly_waste_usd'
 ```
 
 ### CSV export
 
-Print to stdout:
-
 ```bash
 python3 main.py scan --format csv
-```
-
-Save to `reports/`:
-
-```bash
-python3 main.py scan --format csv -o
+python3 main.py scan -n payments --format csv --stdout
 ```
 
 CSV contains **workloads only** (flat rows). Use JSON if you need cluster summary and per-namespace aggregation.
@@ -187,6 +165,38 @@ CSV contains **workloads only** (flat rows). Use JSON if you need cluster summar
 ```
 
 All numeric fields are plain numbers (no `1200m` or `$` suffixes).
+
+---
+
+## HTML report
+
+Offline-friendly report (no CDN, no Google Fonts). Opens in any browser; suitable for email attachments.
+
+```bash
+python3 main.py scan --format html
+python3 main.py scan -n payments --format html
+```
+
+Saved as:
+
+```text
+reports/report-<scope>-<YYYYMMDD-HHMMSS>.html
+```
+
+Open it:
+
+```bash
+xdg-open reports/report-cluster-*.html    # Linux
+open reports/report-cluster-*.html      # macOS
+```
+
+Features:
+
+- Summary cards (CPU/memory efficiency, estimated waste)
+- Sortable namespace and workload tables (click column headers; numeric sort is type-aware)
+- Works fully offline
+
+**Note:** `--stdout` is not supported for HTML (file only). Using `--stdout` with `--format html` exits with an error.
 
 ---
 
@@ -258,19 +268,53 @@ source .venv/bin/activate
 python main.py scan
 ```
 
-### Stray files in the project root
+### Old `report.json` in the project root
 
-Do **not** pass a filename to `--output`. Use the flag alone:
+If you previously ran `python3 main.py scan --format json --output report.json`, that created a file in the repo root. That syntax is no longer used. Delete it:
 
 ```bash
-# correct
-python3 main.py scan --format json -o
-
-# wrong — can create odd files like "can" in the repo root
-python3 main.py scan --output report.json
+rm -f report.json
 ```
 
-Reports belong in `reports/` only.
+Reports are always written under `reports/` with a timestamped name.
+
+---
+
+## How to test
+
+**Repair `main.py` if you see errors** (duplicate code at the bottom of the file):
+
+```bash
+cd ~/idlekube
+python3 fix_main.py
+```
+
+**Cluster + metrics**
+
+```bash
+kubectl top pods -A
+kubectl apply -f manifests/workloads.yaml   # optional demo
+```
+
+**Commands**
+
+```bash
+python3 main.py scan                          # table in terminal
+python3 main.py scan --format json            # -> reports/report-*.json
+python3 main.py scan --format html            # -> reports/report-*.html
+python3 main.py scan -n payments --format html
+python3 main.py scan --format json --stdout | jq '.summary'
+```
+
+**HTML:** open `reports/report-*.html` in a browser (works offline). Click column headers to sort.
+
+**Checklist**
+
+- [ ] `scan` (table) unchanged
+- [ ] JSON/CSV/HTML files appear in `reports/` with timestamp in the name
+- [ ] HTML has no external URLs (offline OK)
+- [ ] Table sort: `1000` before `200` on numeric columns
+- [ ] `--format html --stdout` → error (no HTML on stdout)
 
 ---
 
