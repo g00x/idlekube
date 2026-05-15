@@ -20,13 +20,13 @@ from idlekube.scan_output import (
     write_export_report,
 )
 
-app = typer.Typer(help="IdleKube — Kubernetes efficiency scanner.")
+app = typer.Typer(help="IdleKube — Kubernetes cost & waste intelligence.")
 EXPORT_FORMATS = ("json", "csv", "html")
 
 
 @app.callback()
 def main() -> None:
-    """Analyze cluster resource usage and surface optimization targets."""
+    """Operational efficiency insights for Kubernetes workloads."""
 
 
 @app.command()

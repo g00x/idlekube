@@ -10,7 +10,10 @@ class Recommendation:
     suggested_memory_request_mib: int
     suggested_memory_limit_mib: int
     confidence: str
+    confidence_reasons: list[str]
     note: str
+    observed_cpu_m: int = 0
+    observed_memory_mib: int = 0
 
 
 @dataclass
@@ -35,6 +38,12 @@ class WorkloadRow:
     missing_limits: bool
     idle: bool
     recommendation: Recommendation | None = None
+    annual_waste: float = 0.0
+    categories: list[str] = field(default_factory=list)
+    risk_level: str = "MEDIUM"
+    risk_reasons: list[str] = field(default_factory=list)
+    confidence_level: str = "LOW"
+    confidence_reasons: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -50,3 +59,22 @@ class NamespaceSummary:
     low: int = 0
     workloads: int = 0
     owners: set = field(default_factory=set)
+
+    @property
+    def annual_waste(self) -> float:
+        return round(self.waste_usd * 12, 2)
+
+
+@dataclass
+class ExecutiveSummary:
+    monthly_waste: float
+    annual_waste: float
+    top_namespace: str
+    top_namespace_annual: float
+    top_workload_ref: str
+    top_workload_annual: float
+    ownership_coverage_pct: float
+    high_priority_count: int
+    workload_count: int
+    trends_available: bool = False
+    trend_notes: list[str] = field(default_factory=list)

@@ -12,6 +12,11 @@ MEMORY_FLOOR_MIB = 32
 
 IMPROVEMENT_THRESHOLD = 0.20
 
+ADVISOR_NOTE = (
+    "Conservative review target based on snapshot usage. "
+    "Validate against 7–30d utilization before applying in production."
+)
+
 
 def compute_recommendation(row: WorkloadRow) -> Optional[Recommendation]:
     """
@@ -39,11 +44,18 @@ def compute_recommendation(row: WorkloadRow) -> Optional[Recommendation]:
     if cpu_improvement < IMPROVEMENT_THRESHOLD and mem_improvement < IMPROVEMENT_THRESHOLD:
         return None
 
+    rec_reasons = list(row.confidence_reasons) + [
+        "suggested values use conservative multipliers (CPU 2×, memory 1.5× snapshot usage)",
+    ]
+
     return Recommendation(
         suggested_cpu_request_m=suggested_cpu_req,
         suggested_cpu_limit_m=suggested_cpu_limit,
         suggested_memory_request_mib=suggested_mem_req,
         suggested_memory_limit_mib=suggested_mem_limit,
-        confidence="low",
-        note="Snapshot estimate. Validate against historical usage before applying to production.",
+        confidence=row.confidence_level,
+        confidence_reasons=rec_reasons,
+        note=ADVISOR_NOTE,
+        observed_cpu_m=row.cpu_usage,
+        observed_memory_mib=row.mem_usage,
     )

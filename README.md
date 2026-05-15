@@ -1,8 +1,10 @@
 # IdleKube
 
-IdleKube is a terminal-based Kubernetes efficiency scanner. It compares workload **requests** against live **usage** from metrics-server and highlights where CPU and memory look overprovisioned.
+**Kubernetes cost & waste intelligence** for platform and engineering teams.
 
-It is **not** a billing tool. Use it to decide **where to look first** before changing production requests or limits.
+IdleKube compares workload **requests** against live **usage** (metrics-server), estimates **annual savings potential**, and ranks **what to review first** — with risk, confidence, and ownership signals.
+
+It is **not** a billing system. Use it for **prioritization and safe review targets** before changing production requests or limits.
 
 ## Features
 
@@ -12,7 +14,10 @@ It is **not** a billing tool. Use it to decide **where to look first** before ch
 - Surface missing ownership labels
 - Prioritize optimization targets (HIGH / MEDIUM / LOW)
 - Filter scans to a single namespace
-- **Resource recommendations** — suggested CPU/memory requests and limits (snapshot-based, low confidence)
+- **Executive summary** — annual savings, top namespace/workload, ownership coverage
+- **Advisor-style review targets** — conservative request/limit suggestions with confidence & risk
+- **Optimization categories** — IDLE, OVERPROVISIONED, MISSING_LIMITS, NO_OWNER, ZOMBIE_WORKLOAD
+- **Recommended action order** — what to tackle first (savings × risk × confidence)
 - Export results as **JSON**, **CSV**, or **HTML** (saved under `reports/`)
 
 ## Requirements
@@ -68,7 +73,8 @@ idlekube/
   models.py              # WorkloadRow, NamespaceSummary, Recommendation
   k8s.py                 # Kubernetes API + metrics-server
   compute.py             # scan logic, priorities, waste estimates
-  recommendations.py     # suggested requests/limits (tunable constants)
+  insights.py            # risk, confidence, categories, executive summary
+  recommendations.py     # conservative review targets (tunable constants)
   formatters/
     table.py             # Rich terminal output
     json_.py, csv_.py, html_.py

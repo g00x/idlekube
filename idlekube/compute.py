@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 
+from idlekube.insights import annual_usd, build_executive_summary, enrich_workload
 from idlekube.k8s import get_environment, get_owner, get_service, include_namespace
 from idlekube.models import NamespaceSummary, WorkloadRow
 from idlekube.recommendations import compute_recommendation
@@ -210,6 +211,7 @@ def run_scan(
             missing_limits=missing_limits,
             idle=idle,
         )
+        enrich_workload(row)
         row.recommendation = compute_recommendation(row)
         workload_rows.append(row)
 
@@ -285,6 +287,7 @@ def build_output_dict(
                 "memory_used_mib": data.mem_usage,
                 "memory_unused_mib": ns_unused_mem,
                 "estimated_monthly_waste_usd": round(data.waste_usd, 2),
+                "estimated_annual_waste_usd": data.annual_waste,
                 "high_priority_count": data.high,
                 "medium_priority_count": data.medium,
                 "low_priority_count": data.low,
@@ -302,6 +305,9 @@ def build_output_dict(
                 "suggested_memory_request_mib": rec.suggested_memory_request_mib,
                 "suggested_memory_limit_mib": rec.suggested_memory_limit_mib,
                 "confidence": rec.confidence,
+                "confidence_reasons": rec.confidence_reasons,
+                "observed_cpu_m": rec.observed_cpu_m,
+                "observed_memory_mib": rec.observed_memory_mib,
                 "note": rec.note,
             }
         workloads.append(
@@ -321,13 +327,21 @@ def build_output_dict(
                 "memory_unused_mib": row.unused_mem,
                 "memory_utilization_pct": row.mem_ratio,
                 "estimated_monthly_waste_usd": row.monthly_waste,
+                "estimated_annual_waste_usd": row.annual_waste,
                 "priority": row.priority,
+                "categories": row.categories,
+                "risk_level": row.risk_level,
+                "risk_reasons": row.risk_reasons,
+                "confidence_level": row.confidence_level,
+                "confidence_reasons": row.confidence_reasons,
                 "idle": row.idle,
                 "missing_limits": row.missing_limits,
                 "problems": row.problems,
                 "recommendation": recommendation,
             }
         )
+
+    executive = build_executive_summary(workload_rows, namespace_summary, cluster_waste_usd)
 
     return {
         "meta": {
@@ -349,7 +363,19 @@ def build_output_dict(
             "memory_unused_mib": unused_mem_total,
             "memory_efficiency_pct": memory_efficiency,
             "estimated_monthly_waste_usd": round(cluster_waste_usd, 2),
-            "estimated_annual_waste_usd": round(cluster_waste_usd * 12, 2),
+            "estimated_annual_waste_usd": annual_usd(cluster_waste_usd),
+        },
+        "executive_summary": {
+            "potential_annual_savings_usd": executive.annual_waste,
+            "potential_monthly_savings_usd": executive.monthly_waste,
+            "highest_waste_namespace": executive.top_namespace,
+            "highest_waste_namespace_annual_usd": executive.top_namespace_annual,
+            "most_overprovisioned_workload": executive.top_workload_ref,
+            "most_overprovisioned_workload_annual_usd": executive.top_workload_annual,
+            "ownership_coverage_pct": executive.ownership_coverage_pct,
+            "high_priority_targets": executive.high_priority_count,
+            "trends_available": executive.trends_available,
+            "trend_notes": executive.trend_notes,
         },
         "namespaces": namespaces,
         "workloads": workloads,

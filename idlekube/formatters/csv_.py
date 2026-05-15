@@ -19,7 +19,11 @@ def write_csv(data: dict, output_path: str | None) -> None:
         "memory_unused_mib",
         "memory_utilization_pct",
         "estimated_monthly_waste_usd",
+        "estimated_annual_waste_usd",
         "priority",
+        "categories",
+        "risk_level",
+        "confidence_level",
         "idle",
         "missing_limits",
         "problems",
@@ -33,6 +37,7 @@ def write_csv(data: dict, output_path: str | None) -> None:
     for w in data["workloads"]:
         row = dict(w)
         row["problems"] = ";".join(w["problems"])
+        row["categories"] = ";".join(w.get("categories", []))
         row["idle"] = str(w["idle"]).lower()
         row["missing_limits"] = str(w["missing_limits"]).lower()
         rec = w.get("recommendation")

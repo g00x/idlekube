@@ -21,6 +21,7 @@ from idlekube.compute import build_output_dict  # noqa: E402
 from idlekube.formatters.csv_ import write_csv  # noqa: E402
 from idlekube.formatters.html_ import write_html  # noqa: E402
 from idlekube.formatters.json_ import write_json  # noqa: E402
+from idlekube.insights import enrich_workload  # noqa: E402
 from idlekube.models import NamespaceSummary, WorkloadRow  # noqa: E402
 from idlekube.recommendations import compute_recommendation  # noqa: E402
 
@@ -44,10 +45,15 @@ def test_recommendations() -> None:
         "ns", "dep", "s", "o", "e", 1, 500, 45, 0, 256, 42, 0,
         9.0, 16.0, 10.0, "HIGH", [], False, False,
     )
+    enrich_workload(row)
     rec = compute_recommendation(row)
     if rec is None:
         raise AssertionError("expected recommendation")
     row.recommendation = rec
+    if not row.categories:
+        raise AssertionError("expected categories")
+    if row.risk_level not in ("LOW", "MEDIUM", "HIGH"):
+        raise AssertionError("invalid risk level")
     data = build_output_dict(
         [row],
         {"ns": NamespaceSummary("ns", 500, 45, 256, 42, 10.0, 1, 0, 0, 1, {"o"})},
@@ -55,6 +61,8 @@ def test_recommendations() -> None:
     )
     if data["workloads"][0]["recommendation"] is None:
         raise AssertionError("missing recommendation in output dict")
+    if "executive_summary" not in data:
+        raise AssertionError("missing executive_summary")
 
     tmpdir = Path(tempfile.mkdtemp())
     write_json(data, str(tmpdir / "t.json"))
