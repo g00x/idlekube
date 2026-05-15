@@ -173,15 +173,6 @@ def run_scan(
             memory_cost,
         )
 
-        if total_cpu_req > 0 and cpu_ratio < 10:
-            problems.append("cpu overprovisioned")
-        if total_mem_req > 0 and mem_ratio < 25:
-            problems.append("memory overprovisioned")
-        if idle:
-            problems.append("low utilization workload")
-        if owner == "unknown":
-            problems.append("unknown owner")
-
         priority = get_priority(
             unused_cpu=unused_cpu,
             unused_mem=unused_mem,

@@ -74,10 +74,44 @@ def test_recommendations() -> None:
     header = (tmpdir / "t.csv").read_text(encoding="utf-8").splitlines()[0]
     if "suggested_cpu_request_m" not in header:
         raise AssertionError("csv missing suggestion columns")
+    if data["workloads"][0]["recommendation"]["confidence"] != "LOW":
+        raise AssertionError("confidence must be LOW in snapshot mode")
+    if row.confidence_level != "LOW":
+        raise AssertionError("workload confidence must be LOW")
+
+
+def test_safety_floors() -> None:
+    row = WorkloadRow(
+        "ns", "idle-api", "s", "o", "e", 1, 3000, 5, 0, 4096, 42, 0,
+        0.2, 1.0, 100.0, "HIGH", [], False, True,
+    )
+    enrich_workload(row)
+    rec = compute_recommendation(row)
+    if rec is None:
+        raise AssertionError("expected recommendation for overprovisioned workload")
+    if rec.suggested_cpu_request_m < 100:
+        raise AssertionError(f"cpu floor too low: {rec.suggested_cpu_request_m}m")
+    if rec.suggested_cpu_limit_m < 200:
+        raise AssertionError(f"cpu limit floor too low: {rec.suggested_cpu_limit_m}m")
+    if rec.suggested_memory_request_mib < 64:
+        raise AssertionError(f"memory floor too low: {rec.suggested_memory_request_mib}Mi")
+    if rec.suggested_memory_limit_mib < 128:
+        raise AssertionError(f"memory limit floor too low: {rec.suggested_memory_limit_mib}Mi")
+    if rec.suggested_cpu_request_m < row.cpu_usage:
+        raise AssertionError("cpu request below observed usage")
+    if rec.suggested_memory_request_mib < row.mem_usage:
+        raise AssertionError("memory request below observed usage")
+    if rec.confidence != "LOW":
+        raise AssertionError("confidence must be LOW")
+    if "OVERPROVISIONED" not in row.categories:
+        raise AssertionError("expected OVERPROVISIONED category")
+    if any("overprovisioned" in p.lower() for p in row.problems):
+        raise AssertionError("problems should use category codes only")
 
 
 check("imports", test_imports)
 check("recommendations", test_recommendations)
+check("safety_floors", test_safety_floors)
 
 if errors:
     OUT.write_text("FAIL\n" + "\n".join(errors), encoding="utf-8")

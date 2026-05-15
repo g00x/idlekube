@@ -8,9 +8,11 @@ from idlekube.insights import (
     build_executive_summary,
     category_counts,
     recommended_action_order,
+    sort_categories,
     top_unowned_waste,
 )
 from idlekube.models import ExecutiveSummary, NamespaceSummary, WorkloadRow
+from idlekube.recommendations import CONFIDENCE_REASONS, VALIDATION_NOTE
 
 MAX_NS_ROWS = 8
 MAX_WL_ROWS = 12
@@ -21,10 +23,18 @@ def _money(amount: float) -> str:
     return f"${amount:,.0f}"
 
 
+def _usd_rate(amount: float) -> str:
+    return f"${amount:.0f}"
+
+
 def _badge(level: str) -> str:
     colors = {"HIGH": "red", "MEDIUM": "yellow", "LOW": "green"}
     c = colors.get(level, "white")
     return f"[{c}]{level}[/{c}]"
+
+
+def _format_categories(categories: list[str]) -> str:
+    return ", ".join(sort_categories(categories))
 
 
 def _render_executive_summary(
@@ -39,18 +49,18 @@ def _render_executive_summary(
         f"Scope: [cyan]{scope}[/cyan]",
         f"Potential annual savings: [bold red]{_money(ex.annual_waste)}[/bold red]  "
         f"([dim]{_money(ex.monthly_waste)}/mo[/dim])",
-        f"Highest-waste namespace: [yellow]{ex.top_namespace}[/yellow] → "
+        f"Highest optimization opportunity: [yellow]{ex.top_namespace}[/yellow] → "
         f"{_money(ex.top_namespace_annual)}/year",
-        f"Most overprovisioned workload: [yellow]{ex.top_workload_ref}[/yellow] → "
+        f"Highest optimization target: [yellow]{ex.top_workload_ref}[/yellow] → "
         f"{_money(ex.top_workload_annual)}/year",
         f"Ownership coverage: [cyan]{ex.ownership_coverage_pct}%[/cyan]  ·  "
         f"High-priority targets: [red]{ex.high_priority_count}[/red] / {ex.workload_count} workloads",
     ]
-    if not ex.trends_available:
-        lines.append(
-            "[dim]Trends: unavailable (connect Prometheus for 7–30d waste & efficiency trends)[/dim]"
-        )
     console.print(Panel("\n".join(lines), title="[bold]Executive Summary[/bold]", border_style="blue"))
+    console.print(
+        "[dim]Snapshot-based analysis using metrics-server. "
+        "Historical utilization trends unavailable.[/dim]\n"
+    )
     return ex
 
 
@@ -60,13 +70,11 @@ def _render_recommended_order(workload_rows: list[WorkloadRow]) -> None:
         return
     console.print("\n[bold]What should I do first?[/bold]\n")
     for i, row in enumerate(order, 1):
-        cats = ", ".join(row.categories)
-        console.print(
-            f"  {i}. [bold]{row.namespace}/{row.name}[/bold]\n"
-            f"     Potential annual savings: {_money(row.annual_waste)}  ·  "
-            f"Risk: {_badge(row.risk_level)}  ·  Confidence: {_badge(row.confidence_level)}\n"
-            f"     Categories: [dim]{cats}[/dim]"
-        )
+        console.print(f"  {i}. [bold]{row.namespace}/{row.name}[/bold]")
+        console.print(f"     Savings: {_money(row.annual_waste)}/year")
+        console.print(f"     Risk: {_badge(row.risk_level)}")
+        console.print(f"     Confidence: {_badge(row.confidence_level)}")
+        console.print(f"     Categories: [dim]{_format_categories(row.categories)}[/dim]")
 
 
 def _render_unowned_waste(workload_rows: list[WorkloadRow]) -> None:
@@ -123,7 +131,7 @@ def _render_workload_table(workload_rows: list[WorkloadRow]) -> None:
         table.add_row(
             f"{row.namespace}/{row.name}",
             _money(row.annual_waste),
-            ", ".join(row.categories),
+            _format_categories(row.categories),
             row.risk_level,
             owner,
         )
@@ -137,8 +145,8 @@ def _render_advisor_targets(workload_rows: list[WorkloadRow]) -> None:
         return
 
     console.print(
-        "\n[bold]Suggested safe review targets[/bold]  "
-        "[dim](conservative — validate before applying)[/dim]\n"
+        "\n[bold]Suggested review targets[/bold]  "
+        "[dim](snapshot-based, low confidence)[/dim]\n"
     )
     for row in rows[:MAX_ADVISOR]:
         rec = row.recommendation
@@ -160,9 +168,9 @@ def _render_advisor_targets(workload_rows: list[WorkloadRow]) -> None:
         console.print(
             f"    Confidence: {_badge(rec.confidence)}  ·  Risk: {_badge(row.risk_level)}"
         )
-        for reason in rec.confidence_reasons[:3]:
+        for reason in CONFIDENCE_REASONS[:2]:
             console.print(f"      [dim]• {reason}[/dim]")
-        console.print(f"      [dim]{rec.note}[/dim]\n")
+        console.print(f"      [dim]{VALIDATION_NOTE}[/dim]\n")
 
 
 def render_table_output(
@@ -196,6 +204,6 @@ def render_table_output(
     mem_eff = round((cluster_mem_usage / cluster_mem_req) * 100, 1) if cluster_mem_req else 0
     console.print(
         f"\n[dim]Efficiency snapshot: CPU {cpu_eff}% · Memory {mem_eff}% · "
-        f"Cost model ${_money(cpu_cost)}/core/mo · ${_money(memory_cost)}/GB/mo · "
+        f"Cost model {_usd_rate(cpu_cost)}/core/mo · {_usd_rate(memory_cost)}/GB/mo · "
         f"Snapshot-only — not a billing system.[/dim]\n"
     )

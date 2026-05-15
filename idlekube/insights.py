@@ -7,9 +7,25 @@ from idlekube.models import ExecutiveSummary, NamespaceSummary, WorkloadRow
 PRODUCTION_ENVS = frozenset({"prod", "production", "live", "prd"})
 PRODUCTION_NS_HINTS = ("prod", "production", "live")
 
+CATEGORY_ORDER = [
+    "IDLE",
+    "OVERPROVISIONED",
+    "MISSING_LIMITS",
+    "NO_OWNER",
+    "ZOMBIE_WORKLOAD",
+]
+ALLOWED_CATEGORIES = frozenset(CATEGORY_ORDER)
+
 
 def annual_usd(monthly: float) -> float:
     return round(monthly * 12, 2)
+
+
+def sort_categories(categories: list[str]) -> list[str]:
+    return sorted(
+        [c for c in categories if c in ALLOWED_CATEGORIES],
+        key=lambda c: CATEGORY_ORDER.index(c),
+    )
 
 
 def is_production(row: WorkloadRow) -> bool:
@@ -35,7 +51,7 @@ def classify_categories(row: WorkloadRow) -> list[str]:
     if row.cpu_usage == 0 and row.mem_usage == 0 and row.replicas > 0 and row.cpu_req > 0:
         if "ZOMBIE_WORKLOAD" not in categories:
             categories.append("ZOMBIE_WORKLOAD")
-    return categories or ["STABLE"]
+    return sort_categories(categories)
 
 
 def assess_risk(row: WorkloadRow) -> tuple[str, list[str]]:
@@ -83,41 +99,18 @@ def assess_risk(row: WorkloadRow) -> tuple[str, list[str]]:
     return "LOW", reasons
 
 
-def assess_confidence(row: WorkloadRow) -> tuple[str, list[str]]:
-    reasons = [
-        "only snapshot metrics available (metrics-server)",
-        "no historical Prometheus data connected",
+def assess_confidence(_row: WorkloadRow) -> tuple[str, list[str]]:
+    """Snapshot-only mode: always LOW until Prometheus history is available."""
+    return "LOW", [
+        "metrics-server snapshot only",
+        "no historical Prometheus utilization available",
     ]
-
-    if row.cpu_usage == 0 and row.mem_usage == 0:
-        reasons.append("no usage observed for running pods in this snapshot")
-        return "LOW", reasons
-
-    if row.replicas == 0:
-        reasons.append("deployment scaled to zero replicas")
-        return "LOW", reasons
-
-    signals = 0
-    if row.cpu_req > 0 and row.cpu_usage > 0:
-        signals += 1
-        reasons.append("CPU usage visible in current snapshot")
-    if row.mem_req > 0 and row.mem_usage > 0:
-        signals += 1
-        reasons.append("memory usage visible in current snapshot")
-
-    if row.cpu_ratio < 5 and row.cpu_req > 200:
-        reasons.append("very low CPU utilization — use conservative review targets")
-
-    if signals >= 2 and row.cpu_ratio < 40:
-        return "MEDIUM", reasons
-    if signals >= 1:
-        return "MEDIUM", reasons
-    return "LOW", reasons
 
 
 def enrich_workload(row: WorkloadRow) -> None:
     row.annual_waste = annual_usd(row.monthly_waste)
     row.categories = classify_categories(row)
+    row.problems = list(row.categories)
     row.risk_level, row.risk_reasons = assess_risk(row)
     row.confidence_level, row.confidence_reasons = assess_confidence(row)
 
@@ -164,14 +157,12 @@ def build_executive_summary(
 
 def recommended_action_order(workload_rows: list[WorkloadRow], limit: int = 5) -> list[WorkloadRow]:
     risk_rank = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
-    conf_rank = {"MEDIUM": 0, "LOW": 1, "HIGH": -1}
 
     candidates = [r for r in workload_rows if r.monthly_waste > 0 and r.priority in ("HIGH", "MEDIUM")]
     candidates.sort(
         key=lambda r: (
             -r.annual_waste,
             risk_rank.get(r.risk_level, 1),
-            conf_rank.get(r.confidence_level, 1),
         ),
     )
     return candidates[:limit]
@@ -187,5 +178,6 @@ def category_counts(workload_rows: list[WorkloadRow]) -> dict[str, int]:
     counts: dict[str, int] = {}
     for row in workload_rows:
         for cat in row.categories:
-            counts[cat] = counts.get(cat, 0) + 1
-    return dict(sorted(counts.items(), key=lambda x: -x[1]))
+            if cat in ALLOWED_CATEGORIES:
+                counts[cat] = counts.get(cat, 0) + 1
+    return {cat: counts[cat] for cat in CATEGORY_ORDER if cat in counts}
