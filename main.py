@@ -3,8 +3,10 @@
 # against historical usage before changing production requests.
 
 from collections import defaultdict
+from typing import Optional
 
 from kubernetes import client, config
+from kubernetes.client.rest import ApiException
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
@@ -19,6 +21,12 @@ SYSTEM_NAMESPACES = [
     "kube-node-lease",
     "default",
 ]
+
+
+def include_namespace(namespace: str, namespace_filter: Optional[str]) -> bool:
+    if namespace_filter is not None:
+        return namespace == namespace_filter
+    return namespace not in SYSTEM_NAMESPACES
 
 def cpu_to_millicores(cpu: str) -> int:
     if cpu is None:
@@ -120,15 +128,23 @@ def get_environment(labels: dict) -> str:
     return "unknown"
 
 
-def get_pod_metrics():
+def get_pod_metrics(namespace_filter: Optional[str] = None):
     custom_api = client.CustomObjectsApi()
 
     try:
-        metrics = custom_api.list_cluster_custom_object(
-            group="metrics.k8s.io",
-            version="v1beta1",
-            plural="pods",
-        )
+        if namespace_filter is not None:
+            metrics = custom_api.list_namespaced_custom_object(
+                group="metrics.k8s.io",
+                version="v1beta1",
+                namespace=namespace_filter,
+                plural="pods",
+            )
+        else:
+            metrics = custom_api.list_cluster_custom_object(
+                group="metrics.k8s.io",
+                version="v1beta1",
+                plural="pods",
+            )
     except Exception as e:
         console.print(f"[red]Could not read metrics-server data: {e}[/red]")
         return {}
@@ -138,6 +154,9 @@ def get_pod_metrics():
     for item in metrics.get("items", []):
         namespace = item["metadata"]["namespace"]
         pod_name = item["metadata"]["name"]
+
+        if not include_namespace(namespace, namespace_filter):
+            continue
 
         total_cpu_usage = 0
         total_memory_usage = 0
@@ -157,6 +176,12 @@ def get_pod_metrics():
 
 @app.command()
 def scan(
+    namespace_filter: Optional[str] = typer.Option(
+        None,
+        "--namespace",
+        "-n",
+        help="Analyze only this namespace (e.g. payments)",
+    ),
     cpu_cost: float = typer.Option(25.0, help="Monthly cost per CPU core"),
     memory_cost: float = typer.Option(4.0, help="Monthly cost per GB memory"),
 ):
@@ -165,18 +190,31 @@ def scan(
     apps_v1 = client.AppsV1Api()
     core_v1 = client.CoreV1Api()
 
-    pod_metrics = get_pod_metrics()
+    if namespace_filter is not None:
+        try:
+            core_v1.read_namespace(namespace_filter)
+        except ApiException as e:
+            if e.status == 404:
+                console.print(f"[red]Namespace not found: {namespace_filter}[/red]")
+                raise typer.Exit(code=1)
+            raise
 
-    deployments = apps_v1.list_deployment_for_all_namespaces()
-    pods = core_v1.list_pod_for_all_namespaces()
+    pod_metrics = get_pod_metrics(namespace_filter)
+
+    if namespace_filter is not None:
+        deployments = apps_v1.list_namespaced_deployment(namespace_filter)
+        pods = core_v1.list_namespaced_pod(namespace_filter)
+    else:
+        deployments = apps_v1.list_deployment_for_all_namespaces()
+        pods = core_v1.list_pod_for_all_namespaces()
 
     pods_by_deployment = {}
 
     for pod in pods.items:
-        namespace = pod.metadata.namespace
+        ns = pod.metadata.namespace
         pod_name = pod.metadata.name
 
-        if namespace in SYSTEM_NAMESPACES:
+        if not include_namespace(ns, namespace_filter):
             continue
 
         owner_name = None
@@ -190,7 +228,7 @@ def scan(
             continue
 
         deployment_name = owner_name.rsplit("-", 1)[0]
-        pods_by_deployment.setdefault((namespace, deployment_name), []).append(pod_name)
+        pods_by_deployment.setdefault((ns, deployment_name), []).append(pod_name)
 
     workload_rows = []
     recommendations = []
@@ -217,9 +255,9 @@ def scan(
     cluster_waste_usd = 0.0
 
     for deploy in deployments.items:
-        namespace = deploy.metadata.namespace
+        ns = deploy.metadata.namespace
 
-        if namespace in SYSTEM_NAMESPACES:
+        if not include_namespace(ns, namespace_filter):
             continue
 
         name = deploy.metadata.name
@@ -263,8 +301,8 @@ def scan(
         total_cpu_usage = 0
         total_mem_usage = 0
 
-        for pod_name in pods_by_deployment.get((namespace, name), []):
-            usage = pod_metrics.get((namespace, pod_name), {})
+        for pod_name in pods_by_deployment.get((ns, name), []):
+            usage = pod_metrics.get((ns, pod_name), {})
             total_cpu_usage += usage.get("cpu_m", 0)
             total_mem_usage += usage.get("memory_mib", 0)
 
@@ -301,7 +339,7 @@ def scan(
 
         workload_rows.append(
             {
-                "namespace": namespace,
+                "namespace": ns,
                 "name": name,
                 "service": service,
                 "owner": owner,
@@ -323,15 +361,15 @@ def scan(
             }
         )
 
-        ns = namespace_summary[namespace]
-        ns["cpu_req"] += total_cpu_req
-        ns["cpu_usage"] += total_cpu_usage
-        ns["mem_req"] += total_mem_req
-        ns["mem_usage"] += total_mem_usage
-        ns["waste_usd"] += monthly_waste
-        ns["workloads"] += 1
-        ns["owners"].add(owner)
-        ns[priority.lower()] += 1
+        ns_data = namespace_summary[ns]
+        ns_data["cpu_req"] += total_cpu_req
+        ns_data["cpu_usage"] += total_cpu_usage
+        ns_data["mem_req"] += total_mem_req
+        ns_data["mem_usage"] += total_mem_usage
+        ns_data["waste_usd"] += monthly_waste
+        ns_data["workloads"] += 1
+        ns_data["owners"].add(owner)
+        ns_data[priority.lower()] += 1
 
         cluster_cpu_req += total_cpu_req
         cluster_cpu_usage += total_cpu_usage
@@ -355,8 +393,21 @@ def scan(
     cpu_efficiency = round((cluster_cpu_usage / cluster_cpu_req) * 100, 2) if cluster_cpu_req else 0
     memory_efficiency = round((cluster_mem_usage / cluster_mem_req) * 100, 2) if cluster_mem_req else 0
 
+    if namespace_filter and not workload_rows:
+        console.print(
+            f"[yellow]No deployments found in namespace '{namespace_filter}'.[/yellow]"
+        )
+        raise typer.Exit(code=0)
+
+    scope_title = (
+        f"Namespace Summary: {namespace_filter}"
+        if namespace_filter
+        else "Cluster Summary"
+    )
+    panel_title = f"idlekube — {namespace_filter}" if namespace_filter else "idlekube"
+
     summary = (
-        f"[bold]Cluster Summary[/bold]\n\n"
+        f"[bold]{scope_title}[/bold]\n\n"
         f"CPU requested: [yellow]{cluster_cpu_req}m[/yellow]\n"
         f"CPU used: [green]{cluster_cpu_usage}m[/green]\n"
         f"Potentially unused CPU: [red]{unused_cpu_total}m[/red]\n"
@@ -371,7 +422,7 @@ def scan(
         f"${memory_cost}/GB memory/month"
     )
 
-    console.print(Panel(summary, title="idlekube"))
+    console.print(Panel(summary, title=panel_title))
 
     ns_table = Table(title="Namespace Summary")
 
