@@ -80,7 +80,12 @@ scripts/verify.py        # offline smoke tests (no cluster)
 
 ## Usage
 
-IdleKube uses subcommands. The main command is **`scan`**.
+IdleKube uses the **`scan`** subcommand. These are equivalent:
+
+```bash
+python3 main.py          # runs scan (default)
+python3 main.py scan
+```
 
 ```bash
 python3 main.py --help

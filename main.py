@@ -92,4 +92,9 @@ def scan(
 
 
 if __name__ == "__main__":
+    import sys
+
+    # `python3 main.py` → same as `python3 main.py scan`
+    if len(sys.argv) == 1:
+        sys.argv.append("scan")
     app()
