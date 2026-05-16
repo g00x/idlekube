@@ -81,6 +81,7 @@ def run_scan(
     namespace_filter: Optional[str],
     cpu_cost: float,
     memory_cost: float,
+    cost: bool = False,
 ) -> tuple[list[WorkloadRow], dict[str, NamespaceSummary]]:
     pods_by_deployment = {}
 
@@ -247,6 +248,7 @@ def build_output_dict(
     cpu_cost: float,
     memory_cost: float,
     namespace_filter: Optional[str],
+    cost: bool = False,
 ) -> dict:
     unused_cpu_total = max(cluster_cpu_req - cluster_cpu_usage, 0)
     unused_mem_total = max(cluster_mem_req - cluster_mem_usage, 0)

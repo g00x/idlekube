@@ -34,6 +34,7 @@ def write_export_report(
     memory_cost: float,
     namespace_filter: Optional[str],
     print_stdout: bool,
+    cost: bool = False,
 ) -> None:
     output_data = build_output_dict(
         workload_rows=workload_rows,
@@ -46,6 +47,7 @@ def write_export_report(
         cpu_cost=cpu_cost,
         memory_cost=memory_cost,
         namespace_filter=namespace_filter,
+        cost=cost,
     )
     report_path = resolve_report_path(output_format, namespace_filter)
     if output_format == "json":

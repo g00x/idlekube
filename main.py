@@ -36,6 +36,11 @@ def scan(
     ),
     cpu_cost: float = typer.Option(25.0, help="Monthly cost per CPU core"),
     memory_cost: float = typer.Option(4.0, help="Monthly cost per GB memory"),
+    cost: bool = typer.Option(
+        False,
+        "--cost",
+        help="Show estimated cost impact using the configured pricing model.",
+    ),
     output_format: str = typer.Option("table", "--format", help="Output format: table, json, csv, html"),
     print_stdout: bool = typer.Option(
         False, "--stdout", help="Also print JSON/CSV to stdout (for jq). Ignored for HTML."
@@ -74,20 +79,20 @@ def scan(
         pods = core_v1.list_pod_for_all_namespaces()
 
     workload_rows, namespace_summary = run_scan(
-        deployments, pods, pod_metrics, namespace_filter, cpu_cost, memory_cost
+        deployments, pods, pod_metrics, namespace_filter, cpu_cost, memory_cost, cost
     )
     totals = cluster_totals(workload_rows)
 
     if output_format in EXPORT_FORMATS:
         write_export_report(
             output_format, workload_rows, namespace_summary, *totals,
-            cpu_cost, memory_cost, namespace_filter, print_stdout,
+            cpu_cost, memory_cost, namespace_filter, print_stdout, cost,
         )
         return
 
     exit_if_empty_namespace(namespace_filter, workload_rows)
     render_table_output(
-        workload_rows, namespace_summary, *totals, cpu_cost, memory_cost, namespace_filter
+        workload_rows, namespace_summary, *totals, cpu_cost, memory_cost, namespace_filter, cost
     )
 
 
